@@ -1,0 +1,43 @@
+{
+	"name": "band-bot",
+	"version": "1.0.0",
+	"description": "Telegram Bot",
+	"homepage": "https://github.com/borbiuk/band-bot#readme",
+	"bugs": {
+		"url": "https://github.com/borbiuk/band-bot/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/borbiuk/band-bot.git"
+	},
+	"license": "ISC",
+	"author": "",
+	"main": "index.js",
+	"type": "commonjs",
+	"scripts": {
+		"start": "npx ts-node src/bot.ts",
+		"init": "npm install",
+		"test": "echo \"Error: no test specified\" && exit 1",
+		"lint": "eslint \"./**/*.ts\"",
+		"lint:fix": "eslint --fix \"./**/*.ts\"",
+		"format": "prettier --write \"./**/*.{ts,md,json}\" --config ./.prettierrc.json"
+	},
+	"dependencies": {
+		"better-sqlite3": "11.10.0",
+		"dotenv": "^16.5.0",
+		"telegraf": "4.16.3"
+	},
+	"devDependencies": {
+		"@eslint/eslintrc": "3.3.1",
+		"@eslint/js": "9.27.0",
+		"@types/node": "^22.15.21",
+		"@typescript-eslint/eslint-plugin": "8.32.1",
+		"@typescript-eslint/parser": "8.32.1",
+		"eslint": "9.27.0",
+		"eslint-config-prettier": "10.1.5",
+		"eslint-plugin-import": "2.31.0",
+		"eslint-plugin-node": "11.1.0",
+		"eslint-plugin-prettier": "5.4.0",
+		"prettier": "3.5.3"
+	}
+}
