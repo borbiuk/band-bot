@@ -6,22 +6,17 @@ const db = new Database('playlist.db');
 db.exec(`
     CREATE TABLE IF NOT EXISTS audio
     (
-        id
-        INTEGER
-        PRIMARY
-        KEY
-        AUTOINCREMENT,
-        fileId
-        TEXT
-        NOT
-        NULL,
-        fileName
-        TEXT,
-        chatId
-        INTEGER,
-        messageId
-        INTEGER
-    )
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fileId TEXT NOT NULL,
+        fileName TEXT,
+        chatId INTEGER,
+        messageId INTEGER
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_audio_fileId ON audio(fileId);
+    CREATE INDEX IF NOT EXISTS idx_audio_fileName ON audio(fileName);
+    VACUUM;
+    REINDEX audio;
 `);
 
 export function saveAudio({ fileId, fileName, chatId, messageId }) {

@@ -1,94 +1,154 @@
-import { Context, NarrowedContext, Telegraf } from 'telegraf';
-import { Message } from 'telegraf/typings/core/types/typegram';
+import { Api, TelegramClient } from 'telegram';
 import { saveAudio, searchAudioByName } from './db';
 import environment from './environment';
+import { exist, getClient, notExist } from './utils';
 
-const bot = new Telegraf(environment.botToken);
+(async () => {
+	const client = await getClient();
 
-bot.on('channel_post', async (ctx) => {
-	const post = ctx.channelPost as Message;
-
-	// Audio saving
-	if ('audio' in post && post.audio) {
-		try {
-			const { file_id: fileId, file_name: fileName } = post.audio;
-			if (fileName) {
-				saveAudio({
-					fileId,
-					fileName,
-					chatId: post.chat.id,
-					messageId: post.message_id,
-				});
-			}
-		} catch (e) {
-			console.error(e);
+	client.addEventHandler(async (event) => {
+		if (notExist(event.message?.id)) {
+			return;
 		}
+
+		const { chatId, message } = event.message;
+
+		if (notExist(message)) {
+			return;
+		}
+
+		console.log(event.message)
+
+		if (message.startsWith('/s')) {
+			await search(client, chatId, message);
+		} else if (message.startsWith('/analyze')) {
+			await analyze(client, chatId, message);
+		}
+	});
+})();
+
+async function search(client: TelegramClient, chatId: number, message: string): Promise<void> {
+	const query = message.replace(/^\/s(@\w+)?\s*/, '');
+
+	if (notExist(query)) {
+		await client.sendMessage(chatId, {
+			message: '❗️Search term missed. Example: /s Beyonce - Crazy in Love',
+		});
+		return;
 	}
 
-	// Command handling
-	if ('text' in post && typeof post.text === 'string') {
-		if (post.text.trim().startsWith('/search')) {
-			await handleSearchCommand(ctx, post);
-		}
+	await client.sendMessage(chatId, {
+		message: `🔍 Searching...`,
+	});
+
+	const results = await searchAudioByName(query, 20);
+
+	if (results.length === 0) {
+		await client.sendMessage(chatId, {
+			message: '🔍 Nothing found',
+		});
+		return;
 	}
-});
 
-bot.launch();
-console.log('✅ Bot is running...');
+	await client.sendMessage(chatId, {
+		message: `📀 Found ${results.length} tracks`,
+	});
 
-async function sendAudioAsLink(context, { fileId, fileName, chatId, messageId }): Promise<void> {
-	const link = `https://t.me/c/${String(chatId).replace('-100', '')}/${messageId}`;
-	await context.reply(`📎 [${fileName}](${link})`, { parse_mode: 'Markdown' });
+	const chatResults: {
+		[key: string]: Required<{ messageId: number }>[];
+	} = results.reduce((result, x) => {
+		const key = String(x.chatId);
+		if (notExist(result[key])) {
+			result[key] = [];
+		}
+		result[key].push(x);
+		return result;
+	}, {});
+
+	for (const groupChatId of Object.keys(chatResults)) {
+		const audioMessages = await client.getMessages(groupChatId, {
+			ids: chatResults[groupChatId].map((x) => x.messageId),
+		});
+
+		const messagesToSend = audioMessages.filter(exist);
+		if (messagesToSend.length !== results.length) {
+			console.error('❗️Something went wrong');
+			console.log(results);
+			console.log(messagesToSend);
+		}
+
+		if (messagesToSend.length === 0) {
+			continue;
+		}
+
+		await client.sendMessage(chatId, {
+			message: messagesToSend.length === 1
+				? '📤 Sending...'
+				: `📤 ${messagesToSend.length} Sending...`,
+		});
+
+		await client.forwardMessages(chatId, {
+			messages: messagesToSend,
+			fromPeer: groupChatId,
+		});
+	}
 }
 
-async function handleSearchCommand(ctx, post: Message.TextMessage) {
-	const text = post.text.trim();
-	const query = text.replace(/^\/search(@\w+)?\s*/, '');
+async function analyze(client: TelegramClient, chatId: number, message: string): Promise<void> {
+	const channelName = message.replace(/^\/analyze\s*@?/, '');
 
-	if (!query) {
-		return ctx.reply(
-			'❗️ Wrong input. Example: /search Beyonce - Crazy in Love'
-		);
+	if (notExist(channelName)) {
+		await client.sendMessage(chatId, {
+			message: '❗️Channel name missed. Example: /analyze @cats',
+		});
+		return;
 	}
 
-	try {
-		const results = await searchAudioByName(query);
+	const channel = await client.getEntity(
+		`https://t.me/${environment.channelName}`
+	);
 
-		if (results.length === 0) {
-			return ctx.reply('🔍 Nothing found');
-		}
-
-		for (const { fileId, fileName, messageId, chatId, isBig } of results) {
-			try {
-				if (isBig) {
-					await sendAudioAsLink(ctx, { fileId, fileName, chatId, messageId });
-				} else {
-					await ctx.telegram.sendAudio(ctx.chat.id, fileId);
-				}
-			} catch (err) {
-				console.error(err);
-			}
-		}
-		for (const { fileId } of results) {
-			const id = Number(fileId);
-			try {
-				await ctx.telegram.sendAudio(
-					ctx.chat.id,
-					id
-				);
-			} catch (e) {
-				console.error(e);
-			}
-		}
+	if (notExist(channel) || !(channel instanceof Api.Channel) || channel.username !== channelName) {
+		await client.sendMessage(chatId, {
+			message: '❗️Channel not found',
+		});
 		return;
+	}
 
-		const sendAudioPromises = results.map((audio) =>
-			ctx.telegram.sendAudio(ctx.chat.id, audio.fileId)
-		);
+	let offsetId = 0;
+	const limit = 100;
+	let totalFetched = 0;
 
-		await Promise.allSettled(sendAudioPromises);
-	} catch (e) {
-		ctx.reply('🪗 Oops. Something went wrong');
-		console.error(e);
+	while (true) {
+		const messages = await client.getMessages(channel, { limit, offsetId });
+
+		if (messages.length === 0) {
+			break;
+		}
+
+		const audioMessages = messages
+			.filter(
+				(x) => 'audio' in x && x.audio !== null && x.audio !== undefined
+			)
+			.map(({ id, chatId, audio }) => ({
+				messageId: id,
+				chatId: chatId?.toString(),
+				fileId: audio.id.toString(),
+				fileName: audio.attributes?.find(
+					(attr) => attr instanceof Api.DocumentAttributeFilename
+				)?.fileName,
+			}));
+
+		for (const message of audioMessages) {
+			console.log(message);
+			saveAudio(message);
+		}
+
+		offsetId = messages[messages.length - 1].id;
+		totalFetched += messages.length;
+		await client.sendMessage(chatId, {
+			message: `👨‍🍳️ Fetched ${totalFetched} messages...`,
+		});
+		console.log(`👨‍🍳️ Fetched ${totalFetched} messages...`);
 	}
 }
