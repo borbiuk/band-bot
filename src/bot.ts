@@ -55,7 +55,7 @@ async function search(client: TelegramClient, chatId: number, message: string): 
 	});
 
 	const chatResults: {
-		[key: string]: Required<{ messageId: number }>[];
+		[key: string]: Required<{ messageId: string }>[];
 	} = results.reduce((result, x) => {
 		const key = String(x.chatId);
 		if (notExist(result[key])) {
@@ -67,7 +67,7 @@ async function search(client: TelegramClient, chatId: number, message: string): 
 
 	for (const groupChatId of Object.keys(chatResults)) {
 		const audioMessages = await client.getMessages(groupChatId, {
-			ids: chatResults[groupChatId].map((x) => x.messageId),
+			ids: chatResults[groupChatId].map(({ messageId }) => Number(messageId)),
 		});
 
 		const messagesToSend = audioMessages.filter(exist);
@@ -141,7 +141,7 @@ async function analyze(client: TelegramClient, chatId: number, message: string):
 
 		for (const message of audioMessages) {
 			console.log(message);
-			saveAudio(message);
+			await saveAudio(message);
 		}
 
 		offsetId = messages[messages.length - 1].id;
@@ -151,4 +151,9 @@ async function analyze(client: TelegramClient, chatId: number, message: string):
 		});
 		console.log(`👨‍🍳️ Fetched ${totalFetched} messages...`);
 	}
+
+	await client.sendMessage(chatId, {
+		message: `👨‍🍳️ Analysis done. Total fetched: ${totalFetched}`,
+	});
+	console.log(`👨‍🍳️ Analysis done. Total fetched: ${totalFetched}`);
 }

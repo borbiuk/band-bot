@@ -4,15 +4,15 @@ import environment from './environment';
 
 export async function getClient() {
 	const client = new TelegramClient(
-		new StringSession(environment.appSession),
-		environment.appApiId,
-		environment.appApiHash,
+		new StringSession(environment.telegram.appSession),
+		environment.telegram.appApiId,
+		environment.telegram.appApiHash,
 		{
 			connectionRetries: 5,
 		}
 	);
 
-	await client.start({ botAuthToken: environment.botToken });
+	await client.start({ botAuthToken: environment.telegram.botToken });
 
 	const session = client.session.save();
 	if (!environment.isProd) {

@@ -22,9 +22,9 @@
 		"format": "prettier --write \"./**/*.{ts,md,json}\" --config ./.prettierrc.json"
 	},
 	"dependencies": {
-		"better-sqlite3": "11.10.0",
 		"dotenv": "16.5.0",
 		"input": "1.0.1",
+		"pg": "8.16.0",
 		"telegram": "2.26.22"
 	},
 	"devDependencies": {

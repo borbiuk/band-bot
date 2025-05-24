@@ -1,46 +1,55 @@
-import Database from 'better-sqlite3';
+import { Pool } from 'pg';
+import environment from './environment';
 
-const db = new Database('playlist.db');
+const pool = new Pool({
+	host: environment.postgres.host,
+	port: environment.postgres.port,
+	database: environment.postgres.database,
+	user: environment.postgres.user,
+	password: environment.postgres.password,
+});
 
-// Init DB
-db.exec(`
-    CREATE TABLE IF NOT EXISTS audio
-    (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fileId TEXT NOT NULL,
-        fileName TEXT,
-        chatId INTEGER,
-        messageId INTEGER
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_audio_fileId ON audio(fileId);
-    CREATE INDEX IF NOT EXISTS idx_audio_fileName ON audio(fileName);
-    VACUUM;
-    REINDEX audio;
-`);
-
-export function saveAudio({ fileId, fileName, chatId, messageId }) {
+(async () => {
 	try {
-		const stmt = db.prepare(`
-            INSERT INTO audio (fileId, fileName, chatId, messageId)
-            VALUES (?, ?, ?, ?)
-		`);
-		stmt.run(fileId, fileName.trim().toLowerCase(), chatId, messageId);
+		await pool.query(`
+      CREATE TABLE IF NOT EXISTS audio (
+        id SERIAL PRIMARY KEY,
+        fileId BIGINT NOT NULL UNIQUE,
+        fileName TEXT,
+        chatId BIGINT,
+        messageId BIGINT
+      );
+    `);
 	} catch (e) {
-		console.error(e);
+		console.error('Error creating table:', e);
+		throw e;
+	}
+})();
+
+export async function saveAudio({ fileId, fileName, chatId, messageId }) {
+	try {
+		await pool.query(`
+      INSERT INTO audio (fileId, fileName, chatId, messageId)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (fileId) DO NOTHING
+    `, [fileId, fileName?.trim().toLowerCase(), chatId, messageId]);
+	} catch (e) {
+		console.error('Error saving audio:', e);
 	}
 }
 
-export function searchAudioByName(query: string, limit: number = 10) {
+export async function searchAudioByName(query: string, limit: number = 1) {
 	try {
-		const stmt = db.prepare(`
-            SELECT fileId, messageId, chatId, fileName
-            FROM audio
-            WHERE fileName LIKE ?
-            ORDER BY id DESC LIMIT ?
-		`);
-		return stmt.all(`%${query.trim().toLowerCase()}%`, limit);
+		const res = await pool.query(`
+      SELECT fileId, messageId, chatId, fileName
+      FROM audio
+      WHERE fileName ILIKE $1
+      ORDER BY id DESC
+      LIMIT $2
+    `, [`%${query.trim().toLowerCase()}%`, limit]);
+		return res.rows.map(({ fileid, messageid, chatid, filename }) => ({ fileId: fileid, messageId: messageid, chatId: chatid, fileName: filename }));
 	} catch (e) {
-		console.error(e);
+		console.error('Error searching audio:', e);
+		return [];
 	}
 }
