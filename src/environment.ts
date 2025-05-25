@@ -9,6 +9,8 @@ if (!process.env.BOT_TOKEN) {
 const environment = {
 	isProd: process.env.BOT_ENV_NAME === 'production',
 	channelName: process.env.CHANNEL_NAME,
+	downloadDir: './downloads',
+	pythonPath: './audio_vector/venv/bin/python3',
 	telegram: {
 		botToken: process.env.BOT_TOKEN,
 		appApiId: Number(process.env.APP_API_ID),
