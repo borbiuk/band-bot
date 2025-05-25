@@ -12,12 +12,15 @@ const pool = new Pool({
 (async () => {
 	try {
 		await pool.query(`
+      CREATE EXTENSION IF NOT EXISTS vector;
+
       CREATE TABLE IF NOT EXISTS audio (
         id SERIAL PRIMARY KEY,
         fileId BIGINT NOT NULL UNIQUE,
         fileName TEXT,
         chatId BIGINT,
-        messageId BIGINT
+        messageId BIGINT,
+        embedding vector(20)
       );
     `);
 	} catch (e) {
