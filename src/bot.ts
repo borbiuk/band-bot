@@ -1,8 +1,24 @@
 import { Api, TelegramClient } from 'telegram';
-import { AudioEntity, getAudioWithoutEmbedding, saveAudio, searchAudioByName, updateAudioVector } from './db';
-import environment from './environment';
-import { downloadFile, exist, getClient, getFilePath, notExist, removeFile, sleep } from './utils';
+import {
+	AudioEntity,
+	getAudioWithoutEmbedding,
+	saveAudio,
+	searchAudioByName,
+	updateAudioVector,
+} from './db';
+import {
+	downloadFile,
+	exist,
+	getClient,
+	getFilePath,
+	notExist,
+	removeFile,
+	sendAudio,
+	sleep,
+} from './utils';
 import { vector } from './vector';
+
+const WORKERS_COUNT = 0;
 
 (async () => {
 	const client = await getClient();
@@ -12,100 +28,75 @@ import { vector } from './vector';
 			return;
 		}
 
-		const { chatId, message } = event.message;
+		const { chatId: userChatId, message } = event.message;
 
 		if (notExist(message)) {
 			return;
 		}
 
 		if (message.startsWith('/s')) {
-			await searchAudio(client, chatId, message);
+			await searchAudio(client, userChatId, message);
 		} else if (message.startsWith('/analyze')) {
-			await analyzeChannel(client, chatId, message);
+			await analyzeChannel(client, userChatId, message);
 		}
-
-		await vectorizingJob(client);
 	});
+
+	await vectorizingJob(client);
 })();
 
-async function searchAudio(client: TelegramClient, chatId: number, message: string): Promise<void> {
+async function searchAudio(
+	client: TelegramClient,
+	userChatId: number,
+	message: string
+): Promise<void> {
 	const query = message.replace(/^\/s(@\w+)?\s*/, '');
 
 	if (notExist(query)) {
-		await client.sendMessage(chatId, {
-			message: '❗️Search term missed. Example: /s Beyonce - Crazy in Love',
+		await client.sendMessage(userChatId, {
+			message:
+				'❗️Search term missed. Example: /s Beyonce - Crazy in Love',
 		});
 		return;
 	}
 
-	await client.sendMessage(chatId, {
-		message: `🔍 Searching...`,
+	await client.sendMessage(userChatId, {
+		message: '🔍 Searching...',
 	});
 
-	const results = await searchAudioByName(query, 20);
+	const results = await searchAudioByName(query, 10);
 
 	if (results.length === 0) {
-		await client.sendMessage(chatId, {
+		await client.sendMessage(userChatId, {
 			message: '🔍 Nothing found',
 		});
 		return;
 	}
 
-	await client.sendMessage(chatId, {
+	await client.sendMessage(userChatId, {
 		message: `📀 Found ${results.length} tracks`,
 	});
 
-	const chatResults = results.reduce((p, c) => {
-		const key = String(c.chatId);
-		if (notExist(p[key])) {
-			p[key] = [];
-		}
-		p[key].push(c);
-		return p;
-	}, {}) as {
-		[key: string]: Required<{ messageId: string }>[];
-	};
-
-	for (const groupChatId of Object.keys(chatResults)) {
-		const audioMessages = await client.getMessages(groupChatId, {
-			ids: chatResults[groupChatId].map(({ messageId }) => Number(messageId)),
-		});
-
-		const messagesToSend = audioMessages.filter(exist);
-
-		if (messagesToSend.length === 0) {
-			continue;
-		}
-
-		await client.sendMessage(chatId, {
-			message: messagesToSend.length === 1
-				? '📤 Sending...'
-				: `📤 ${messagesToSend.length} Sending...`,
-		});
-
-		await client.forwardMessages(chatId, {
-			messages: messagesToSend,
-			fromPeer: groupChatId,
-		});
-	}
+	await sendAudio(client, userChatId, results);
 }
 
-async function analyzeChannel(client: TelegramClient, chatId: number, message: string): Promise<void> {
+async function analyzeChannel(
+	client: TelegramClient,
+	userChatId: number,
+	message: string
+): Promise<void> {
 	const channelName = message.replace(/^\/analyze\s*@?/, '');
 
 	if (notExist(channelName)) {
-		await client.sendMessage(chatId, {
+		await client.sendMessage(userChatId, {
 			message: '❗️Channel name missed. Example: /analyze @cats',
 		});
 		return;
 	}
 
-	const channel = await client.getEntity(
-		`https://t.me/${environment.channelName}`
-	);
+	const channel = await client.getEntity(`https://t.me/${channelName}`);
 
-	if (notExist(channel) || !(channel instanceof Api.Channel) || channel.username !== channelName) {
-		await client.sendMessage(chatId, {
+	if (notExist(channel) || !(channel instanceof Api.Channel)) {
+		await client.sendMessage(userChatId, {
 			message: '❗️Channel not found',
 		});
 		return;
@@ -123,12 +114,10 @@ async function analyzeChannel(client: TelegramClient, chatId: number, message: s
 		}
 
 		const audioMessages = messages
-			.filter(
-				(x) => 'audio' in x && exist(x.audio !== null)
-			)
+			.filter((x) => 'audio' in x && exist(x.audio))
 			.map(({ id, chatId, audio }) => ({
 				messageId: id,
-				chatId: chatId?.toString(),
+				chatId: Number(chatId),
 				fileName: audio.attributes?.find(
 					(attr) => attr instanceof Api.DocumentAttributeFilename
 				)?.fileName,
@@ -142,20 +131,20 @@ async function analyzeChannel(client: TelegramClient, chatId: number, message: s
 		}
 
 		offsetId = messages[messages.length - 1].id;
-		await client.sendMessage(chatId, {
+		await client.sendMessage(userChatId, {
 			message: `👨‍🍳️ Fetched ${totalFetched} messages...`,
 		});
 	}
 
-	await client.sendMessage(chatId, {
+	await client.sendMessage(userChatId, {
 		message: `👨‍🍳️ Analysis done. Total fetched: ${totalFetched}`,
 	});
 }
 
 async function vectorizingJob(client: TelegramClient) {
-
 	const filesToVectorize: AudioEntity[] = [];
-	let isRunning = true;
+	const isRunning = true;
+
 	const fetchFilesLoop = async () => {
 		while (isRunning) {
 			if (filesToVectorize.length < 10) {
@@ -166,7 +155,7 @@ async function vectorizingJob(client: TelegramClient) {
 			}
 			await sleep(5_000);
 		}
-	}
+	};
 
 	const workerThread = async (id: number) => {
 		while (isRunning) {
@@ -186,7 +175,11 @@ async function vectorizingJob(client: TelegramClient) {
 					return;
 				}
 
-				await updateAudioVector({ ...audioEntity, embedding });
+				await updateAudioVector(
+					audioEntity.chatId,
+					audioEntity.messageId,
+					embedding
+				);
 			} catch (e) {
 				console.error(`File ${audioEntity.fileName} failed`, e);
 				console.error(`Worker ${id} error processing file:`, e);
@@ -196,8 +189,10 @@ async function vectorizingJob(client: TelegramClient) {
 				}
 			}
 		}
-	}
+	};
 
-	const workers = Array.from({ length: 5 }).map((_, index) => workerThread(index));
+	const workers = Array.from({ length: WORKERS_COUNT }).map((_, index) =>
+		workerThread(index)
+	);
 	await Promise.all([fetchFilesLoop(), ...workers]);
 }

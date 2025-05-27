@@ -9,13 +9,26 @@ export async function vector(filePath: string): Promise<number[]> {
 	try {
 		await fs.access(filePath);
 
-		const { stdout } = await execFileAsync(environment.pythonPath, ['./audio_vector/vector.py', filePath]);
+		const { stdout } = await execFileAsync(environment.pythonPath, [
+			'./audio_vector/vector.py',
+			filePath,
+		]);
 
-		return stdout
+		const vector = stdout
 			.replace(/[\[\]\n]/g, '')
 			.split(/\s+/)
 			.filter(Boolean)
-			.map(Number);
+			.map(Number)
+			.filter((x) => !Number.isNaN(x));
+
+		if (vector.length !== 180) {
+			console.error('Vector failed');
+			console.error(stdout);
+			console.log(vector);
+			return null;
+		}
+
+		return vector;
 	} catch (e) {
 		console.error(e);
 		return null;
