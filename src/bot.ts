@@ -5,6 +5,7 @@ import {
 	getAudioWithoutVector,
 	saveAudio,
 	searchAudioByName,
+	searchRecommended,
 	updateAudioVector,
 } from './db';
 import environment from './environment';
@@ -36,10 +37,8 @@ const WORKERS_COUNT = 3;
 			return;
 		}
 
-		if (messageText.startsWith('/r') && event.message.isReply) {
-			console.log(event);
-			const reply = await event.message.getReplyMessage();
-			console.log(reply);
+		if (messageText.startsWith('/r')) {
+			await recommendAudio(client, userChatId, event.message);
 		} else if (messageText.startsWith('/s')) {
 			await searchAudio(client, userChatId, messageText);
 		} else if (messageText.startsWith('/analyze')) {
@@ -87,6 +86,88 @@ async function searchAudio(
 	});
 
 	await sendAudio(client, userChatId, results);
+}
+
+async function recommendAudio(
+	client: TelegramClient,
+	userChatId: number,
+	message: {
+		isReply: boolean;
+		replyTo: {
+			replyToMsgId: number;
+		};
+		message: string;
+	}
+) {
+	if (!message.isReply) {
+		await client.sendMessage(userChatId, {
+			message: '❗️Reply on audio message with /r command.',
+		});
+		return;
+	}
+	const messages = await client.getMessages(userChatId, {
+		ids: [message.replyTo.replyToMsgId],
+	});
+	if (messages.length === 0) {
+		await client.sendMessage(userChatId, {
+			message:
+				'❗️Message not found. Reply on audio message with /r command.',
+		});
+		return;
+	}
+
+	const audioMessages = messages
+		.filter((x) => 'audio' in x && exist(x.audio))
+		.map(({ audio }) => ({
+			fileName: audio.attributes?.find(
+				(attr) => attr instanceof Api.DocumentAttributeFilename
+			)?.fileName,
+		}));
+
+	if (audioMessages.length === 0) {
+		await client.sendMessage(userChatId, {
+			message:
+				'❗️Missed audio file. Reply on audio message with /r command.',
+		});
+	}
+
+	const audioEntity = await searchAudioByName(audioMessages[0].fileName, 1);
+	if (audioEntity.length === 0) {
+		await client.sendMessage(userChatId, {
+			message:
+				'❗️Audio not found in database. Reply on audio founded by bot. Or try to analyze channel with /analyze command. Example: /analyze @cats',
+		});
+	}
+
+	let vectorIndex = 0;
+	const query = message.message.replace(/^\/r(@\w+)?\s*/, '');
+	if (exist(query)) {
+		vectorIndex = Number(query);
+		if (notExist(vectorIndex) || vectorIndex < 0 || vectorIndex > 9) {
+			await client.sendMessage(userChatId, {
+				message:
+					'❗️Vector index should be between 0 and 9. Example: /r 3',
+			});
+			return;
+		}
+	}
+
+	await client.sendMessage(userChatId, {
+		message: '🔍 Searching...',
+	});
+
+	const recommendations = await searchRecommended(
+		audioEntity[0].chatId,
+		audioEntity[0].messageId,
+		vectorIndex
+	);
+	if (recommendations.length === 0) {
+		await client.sendMessage(userChatId, {
+			message: `👨‍🍳️ Nothing found. Maybe this audio is not processed yet. Try to analyze channel with /analyze command.`,
+		});
+		return;
+	}
+	await sendAudio(client, userChatId, recommendations);
 }
 
 async function analyzeChannel(
@@ -142,7 +223,7 @@ async function analyzeChannel(
 
 		offsetId = messages[messages.length - 1].id;
 		await client.sendMessage(userChatId, {
-			message: `👨‍🍳️ Fetched ${totalFetched} messages...`,
+			message: totalFetched === 0 ? '👨‍🍳️ Fetching...' : `👨‍🍳️ Fetched ${totalFetched} messages...`,
 		});
 	}
 

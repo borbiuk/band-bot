@@ -130,15 +130,18 @@ export async function searchAudioByName(
 export async function searchRecommended(
 	chatId: number,
 	messageId: number,
-	limit: number = 10
+	vectorIndex: number,
+	limit: number = 5
 ): Promise<AudioEntity[]> {
 	try {
+		const vectorColumn = `vector${vectorIndex === 0 ? '' : vectorIndex}`;
+
 		const res = await pool.query(
 			`
                 WITH target AS (
-                    SELECT vector
+                    SELECT ${vectorColumn}
                     FROM audio
-                    WHERE chatId = $1 AND messageId = $2 AND vector IS NOT NULL
+                    WHERE chatId = $1 AND messageId = $2 AND ${vectorColumn} IS NOT NULL
                         LIMIT 1
                 )
                 SELECT
@@ -146,11 +149,11 @@ export async function searchRecommended(
                     a.fileName,
                     a.chatId,
                     a.messageId,
-                    a.vector,
-                    a.vector <-> target.vector AS distance  -- Euclidean distance (adjust based on your pgvector config)
+                    a.${vectorColumn},
+                    a.${vectorColumn} <-> target.${vectorColumn} AS distance
                 FROM audio a, target
-                WHERE a.vector IS NOT NULL
-                  AND (a.chatId != $1 AND a.messageId != $w)  -- exclude the target file itself
+                WHERE a.${vectorColumn} IS NOT NULL
+                  AND (a.chatId != $1 AND a.messageId != $2)
                 ORDER BY distance ASC
                     LIMIT $3;
 			`,
