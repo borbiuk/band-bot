@@ -139,3 +139,4 @@ dist
 # python
 .venv/
 venv/
+downloads/

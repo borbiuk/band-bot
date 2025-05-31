@@ -1,11 +1,13 @@
+import fs from 'fs/promises';
 import { Api, TelegramClient } from 'telegram';
 import {
-	AudioEntity,
-	getAudioWithoutEmbedding,
+	AudioVectorStatus,
+	getAudioWithoutVector,
 	saveAudio,
 	searchAudioByName,
 	updateAudioVector,
 } from './db';
+import environment from './environment';
 import {
 	downloadFile,
 	exist,
@@ -16,9 +18,9 @@ import {
 	sendAudio,
 	sleep,
 } from './utils';
-import { vector } from './vector';
+import { generateVectors } from './vector';
 
-const WORKERS_COUNT = 0;
+const WORKERS_COUNT = 3;
 
 (async () => {
 	const client = await getClient();
@@ -28,16 +30,24 @@ const WORKERS_COUNT = 0;
 			return;
 		}
 
-		const { chatId: userChatId, message } = event.message;
+		const { chatId: userChatId, message: messageText } = event.message;
 
-		if (notExist(message)) {
+		if (notExist(messageText)) {
 			return;
 		}
 
-		if (message.startsWith('/s')) {
-			await searchAudio(client, userChatId, message);
-		} else if (message.startsWith('/analyze')) {
-			await analyzeChannel(client, userChatId, message);
+		if (messageText.startsWith('/r') && event.message.isReply) {
+			console.log(event);
+			const reply = await event.message.getReplyMessage();
+			console.log(reply);
+		} else if (messageText.startsWith('/s')) {
+			await searchAudio(client, userChatId, messageText);
+		} else if (messageText.startsWith('/analyze')) {
+			await analyzeChannel(client, userChatId, messageText);
+		} else if (messageText.startsWith('/health')) {
+			await client.sendMessage(userChatId, {
+				message: '👍',
+			});
 		}
 	});
 
@@ -142,13 +152,13 @@ async function analyzeChannel(
 }
 
 async function vectorizingJob(client: TelegramClient) {
-	const filesToVectorize: AudioEntity[] = [];
+	const filesToVectorize: AudioVectorStatus[] = [];
 	const isRunning = true;
 
 	const fetchFilesLoop = async () => {
 		while (isRunning) {
 			if (filesToVectorize.length < 10) {
-				const notVectorizedFiles = await getAudioWithoutEmbedding();
+				const notVectorizedFiles = await getAudioWithoutVector();
 				if (notVectorizedFiles.length > 0) {
 					filesToVectorize.push(...notVectorizedFiles);
 				}
@@ -165,27 +175,37 @@ async function vectorizingJob(client: TelegramClient) {
 				continue;
 			}
 
-			let isFileDownloaded = false;
+			const filePath = getFilePath(audioEntity.fileName);
+			let isFileDownloaded: boolean;
 			try {
-				const filePath = await downloadFile(client, audioEntity);
+				await fs.access(filePath);
 				isFileDownloaded = true;
+			} catch {
+				isFileDownloaded = false;
+			}
 
-				const embedding = await vector(filePath);
-				if (notExist(embedding)) {
+			try {
+				if (!isFileDownloaded) {
+					await downloadFile(client, audioEntity, filePath);
+					isFileDownloaded = true;
+				}
+
+				const vectors = await generateVectors(filePath, audioEntity, 1);
+				if (notExist(vectors)) {
 					return;
 				}
 
 				await updateAudioVector(
 					audioEntity.chatId,
 					audioEntity.messageId,
-					embedding
+					vectors
 				);
 			} catch (e) {
 				console.error(`File ${audioEntity.fileName} failed`, e);
 				console.error(`Worker ${id} error processing file:`, e);
 			} finally {
-				if (isFileDownloaded) {
-					await removeFile(getFilePath(audioEntity.fileName));
+				if (isFileDownloaded && environment.isProd) {
+					await removeFile(filePath);
 				}
 			}
 		}

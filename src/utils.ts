@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import input from 'input';
 import path from 'node:path';
 import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
@@ -16,7 +17,14 @@ export async function getClient() {
 		}
 	);
 
-	await client.start({ botAuthToken: environment.telegram.botToken });
+	//await client.start({botAuthToken: environment.telegram.botToken });
+	await client.start({
+		phoneNumber: async () => await input.text('Phone number: '),
+		password: async () => await input.text('2FA Password (if any): '),
+		phoneCode: async () => await input.text('Code sent to Telegram: '),
+		onError: (err) => console.log(err),
+		botAuthToken: environment.telegram.botToken,
+	});
 
 	const session = client.session.save();
 	if (!environment.isProd) {
@@ -28,8 +36,13 @@ export async function getClient() {
 
 export async function downloadFile(
 	client: TelegramClient,
-	{ chatId, messageId, fileName }: AudioEntity
-) {
+	{
+		chatId,
+		messageId,
+		fileName,
+	}: { chatId: number; messageId: number; fileName: string },
+	filePath: string
+): Promise<void> {
 	const message = await client.getMessages(chatId, { ids: messageId });
 	if (
 		notExist(message) ||
@@ -53,7 +66,7 @@ export async function downloadFile(
 				(Number(downloaded) / Number(total)) * 100
 			);
 
-			if (percent >= lastLogged + 50) {
+			if (percent >= lastLogged + 50 && lastLogged !== 50) {
 				lastLogged = percent - (percent % 50);
 				console.log(`(${fileName}) Downloading ${lastLogged}%...`);
 			}
@@ -64,16 +77,15 @@ export async function downloadFile(
 	}
 
 	const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(2);
+	const fileSize = (buffer.length / (1024 * 1024)).toFixed(2);
 	console.log(
-		`(${fileName}) Downloading complete in ${elapsedSeconds} seconds`
+		`(${fileName}) Downloading complete in ${elapsedSeconds} seconds, ${fileSize} MB`
 	);
 
 	await fs.mkdir(environment.downloadDir, { recursive: true });
-	const filePath = getFilePath(fileName);
 	await fs.writeFile(filePath, buffer);
 
 	console.log(`(${fileName}) Saved`);
-	return filePath;
 }
 
 export async function removeFile(filePath: string) {
